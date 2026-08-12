@@ -24,12 +24,21 @@ def get_intervals_data():
             if data and isinstance(data, list) and len(data) > 0:
                 return str(data[-1])
             return str(data)
-        return f"No se pudieron obtener datos de Intervals.icu (Código {response.status_code})."
+        return f"Sin datos de Intervals.icu (Código {response.status_code})."
     except Exception as e:
-        return f"Error de conexión con Intervals.icu: {e}"
+        return f"Error en Intervals.icu: {e}"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("¡Hola! Soy tu asistente de entrenamiento. Pregúntame lo que quieras sobre tu descanso o recuperación.")
+    await update.message.reply_text("¡Hola! Puedes enviar /modelos para consultar la lista exacta de modelos activos en tu cuenta.")
+
+async def list_models(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Llama a ModelService.ListModels para mostrar los modelos permitidos por tu API Key"""
+    try:
+        available = [m.name for m in client.models.list()]
+        lista_str = "\n".join(available) if available else "No se encontraron modelos."
+        await update.message.reply_text(f"Modelos disponibles en tu API Key:\n\n{lista_str}")
+    except Exception as e:
+        await update.message.reply_text(f"Error al consultar ListModels: {str(e)}")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_prompt = update.message.text
@@ -37,7 +46,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     prompt_completo = f"""
     Eres un entrenador deportivo experto en fisiología y recuperación.
-    Analiza la consulta del usuario combinándola con sus datos biométricos recientes importados desde Garmin a Intervals.icu:
+    Analiza la consulta del usuario combinándola con sus datos biométricos recientes:
 
     DATOS RECIENTES DE INTERVALS.ICU:
     {intervals_info}
@@ -45,7 +54,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     MENSAJE DEL USUARIO:
     {user_prompt}
 
-    Responde de forma directa, concisa y práctica con recomendaciones sobre descanso, preparación física o carga de entrenamiento.
+    Responde de forma directa, concisa y práctica.
     """
     
     try:
@@ -53,15 +62,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             model='gemini-2.0-flash',
             contents=prompt_completo,
         )
-        # Validar que la respuesta contenga texto antes de enviarla a Telegram
-        output_text = response.text if response.text else "No se pudo generar un análisis con los datos actuales."
+        output_text = response.text if response.text else "No se generó respuesta."
         await update.message.reply_text(str(output_text))
     except Exception as e:
-        await update.message.reply_text(f"Error al procesar la consulta con Gemini: {str(e)}")
+        # En caso de fallo, listamos directamente los modelos permitidos
+        try:
+            available = [m.name for m in client.models.list()]
+            lista = "\n".join(available[:10])
+            error_msg = f"Error generando respuesta: {e}\n\nModelos reconocidos por tu API Key:\n{lista}"
+        except Exception as e2:
+            error_msg = f"Error generando respuesta: {e}\n(Tampoco se pudieron listar modelos: {e2})"
+        
+        await update.message.reply_text(error_msg)
 
 def main():
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("modelos", list_models))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.run_polling()
 
