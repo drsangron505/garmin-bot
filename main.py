@@ -1,8 +1,15 @@
 import os
+import logging
 import requests
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from google import genai
+
+# Configuración de logs para diagnóstico claro en Railway
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 
 # Cargar variables de entorno desde Railway
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -15,6 +22,9 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 
 def get_intervals_data():
     """Consulta los datos recientes de salud/bienestar en Intervals.icu"""
+    if not INTERVALS_API_KEY or not INTERVALS_ATHLETE_ID:
+        return "Variables de Intervals.icu no configuradas."
+        
     url = f"https://intervals.icu/api/v1/athlete/{INTERVALS_ATHLETE_ID}/wellness"
     headers = {"Authorization": f"Bearer {INTERVALS_API_KEY}"}
     try:
@@ -30,14 +40,6 @@ def get_intervals_data():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("¡Hola! Soy tu asistente de entrenamiento. Pregúntame sobre tu descanso o recuperación.")
-
-async def list_models(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        available = [m.name for m in client.models.list()]
-        lista_str = "\n".join(available) if available else "No se encontraron modelos."
-        await update.message.reply_text(f"Modelos disponibles en tu API Key:\n\n{lista_str}")
-    except Exception as e:
-        await update.message.reply_text(f"Error al consultar ListModels: {str(e)}")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_prompt = update.message.text
@@ -57,8 +59,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     
     try:
+        # Usamos el alias oficial que apunta directamente al modelo flash activo de tu cuenta
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-flash-latest',
             contents=prompt_completo,
         )
         output_text = response.text if response.text else "No se generó respuesta con los datos actuales."
@@ -68,13 +71,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     if not TELEGRAM_BOT_TOKEN:
-        print("Error: Falta la variable TELEGRAM_BOT_TOKEN")
+        logging.error("Falta la variable TELEGRAM_BOT_TOKEN en Railway.")
         return
+
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("modelos", list_models))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.run_polling()
+    
+    logging.info("Iniciando bot de Telegram...")
+    # drop_pending_updates evita cierres en Railway por conflicto de peticiones colgadas
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
