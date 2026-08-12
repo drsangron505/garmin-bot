@@ -16,7 +16,7 @@ def get_intervals_data():
     api_key = os.getenv("INTERVALS_API_KEY")
 
     if not api_key or not athlete_id:
-        return "Variables de Intervals.icu no configuradas en Railway."
+        return "Variables de Intervals.icu no configuradas."
         
     url = f"https://intervals.icu/api/v1/athlete/{athlete_id}/wellness"
     try:
@@ -26,21 +26,21 @@ def get_intervals_data():
             if data and isinstance(data, list) and len(data) > 0:
                 return str(data[-1])
             return str(data)
-        return f"Sin datos de Intervals.icu (Código {response.status_code})."
+        return f"Sin datos recientes (Código {response.status_code})."
     except Exception as e:
         return f"Error de conexión con Intervals.icu: {e}"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("¡Hola! Soy tu asistente de entrenamiento. Pregúntame sobre tu descanso, HRV o preparación para la sesión de hoy.")
+    await update.message.reply_text("¡Aprobado! Ya estoy configurado. Pregúntame lo que quieras o dime 'Dame mi resumen' para ver tu estado de hoy.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Security Check
+    # Control de seguridad por ID
     allowed_user_id = os.getenv("ALLOWED_TELEGRAM_USER_ID")
     if allowed_user_id and str(update.effective_user.id) != str(allowed_user_id):
-        await update.message.reply_text("Servicio privado: No tienes permisos para usar este bot.")
+        await update.message.reply_text("Acceso no autorizado.")
         return
 
-    # Indicador de estado "Escribiendo..." en Telegram
+    # Feedback visual de "Escribiendo..."
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
     user_prompt = update.message.text
@@ -48,16 +48,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gemini_key = os.getenv("GEMINI_API_KEY")
     
     prompt_completo = f"""
-    Eres un entrenador deportivo experto en fisiología, HRV y recuperación deportiva.
-    Analiza la consulta del usuario interpretando sus datos biométricos recientes importados desde Garmin a Intervals.icu:
+    Eres un entrenador personal y preparador físico cercano, directo y humano. Hablas por chat de WhatsApp.
 
-    DATOS RECIENTES DE INTERVALS.ICU:
+    CONTEXTO INTERNO DE DATOS BIOMÉTRICOS (INTERVALS.ICU):
     {intervals_info}
+
+    REGLAS DE RESPUESTA:
+    1. TONO: Natural, directo, conciso y cercano. Nada de lenguaje académico ni cháchara. Sé práctico.
+    2. FORMATO: PROHIBIDO usar encabezados de Markdown tipo '###', listas interminables o código LaTeX. Escribe en párrafos limpios como un mensaje de texto normal.
+    3. DATOS DE INTERVALS: Usa estos datos de fondo para saber si el usuario está fatigado o listo, PERO NO recites las métricas (CTL, ATL, TSB, FC) ni desgloses el JSON a menos que el usuario te pida explícitamente un "resumen", "informe" o "¿cómo están mis números?".
+    4. BREVEDAD: Para preguntas casuales o dudas rápidas, responde en 2 a 4 frases muy concretas. Ir al grano es la máxima prioridad.
 
     MENSAJE DEL USUARIO:
     {user_prompt}
-
-    Responde de forma estructurada, directa y práctica, dando pautas concretas sobre la intensidad del entrenamiento, descanso activo o ajuste de cargas.
     """
     
     try:
@@ -66,7 +69,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             model='gemini-flash-latest',
             contents=prompt_completo,
         )
-        output_text = response.text if response.text else "No se generó respuesta con los datos actuales."
+        output_text = response.text if response.text else "No pude generar respuesta."
         
         if len(output_text) > 4000:
             for i in range(0, len(output_text), 4000):
@@ -76,7 +79,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logging.error(f"Error procesando Gemini: {e}")
-        await update.message.reply_text(f"Error procesando la consulta con Gemini: {str(e)}")
+        await update.message.reply_text(f"Error procesando la consulta: {str(e)}")
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logging.error(f"Excepción capturada en Telegram: {context.error}")
