@@ -6,20 +6,19 @@ import requests
 from telegram import Update, BotCommand
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from google import genai
+from google.genai import types
 
-# Configuración de logs
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 
 def get_intervals_data(days=3):
-    """Consulta los datos de salud/bienestar en Intervals.icu para los últimos días"""
     athlete_id = os.getenv("INTERVALS_ATHLETE_ID")
     api_key = os.getenv("INTERVALS_API_KEY")
 
     if not api_key or not athlete_id:
-        return "Variables de Intervals.icu no configuradas en Railway."
+        return "Variables de Intervals.icu no configuradas."
         
     url = f"https://intervals.icu/api/v1/athlete/{athlete_id}/wellness"
     try:
@@ -27,9 +26,7 @@ def get_intervals_data(days=3):
         if response.status_code == 200:
             data = response.json()
             if data and isinstance(data, list) and len(data) > 0:
-                # Devolver los últimos registros para tener contexto de tendencia
-                recent = data[-days:]
-                return str(recent)
+                return str(data[-days:])
             return str(data)
         return f"Sin datos de Intervals.icu (Código {response.status_code})."
     except Exception as e:
@@ -42,12 +39,12 @@ def is_user_allowed(user_id):
     return True
 
 async def post_init(application: Application):
-    """Registra automáticamente el menú desplegable de comandos en la app de Telegram"""
     commands = [
-        BotCommand("resumen", "Informe completo de recuperación y estado diario"),
-        BotCommand("datos", "Ver métricas numéricas sincronizadas de Garmin/Intervals"),
-        BotCommand("ayuda", "Instrucciones de uso del bot"),
-        BotCommand("start", "Reiniciar la conversación")
+        BotCommand("resumen", "Informe completo de recuperación"),
+        BotCommand("reset", "Borrar memoria del chat y empezar nuevo tema"),
+        BotCommand("datos", "Ver métricas numéricas sincronizadas"),
+        BotCommand("ayuda", "Instrucciones de uso"),
+        BotCommand("start", "Iniciar conversación")
     ]
     await application.bot.set_my_commands(commands)
 
@@ -55,15 +52,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_user_allowed(update.effective_user.id):
         await update.message.reply_text("Acceso no autorizado.")
         return
+    context.user_data["history"] = []
     msg = (
         "¡Hola! Soy tu asistente de rendimiento y recuperación.\n\n"
-        "💬 Puedes chatear conmigo de forma natural sobre dudas de entreno, descansos o cargas.\n\n"
+        "💬 Ahora mantengo el contexto de la conversación.\n\n"
         "📌 Comandos útiles:\n"
-        "• /resumen - Informe biométrico y sugerencia para el día.\n"
-        "• /datos - Ver datos numéricos crudos sincronizados de Intervals.\n"
+        "• /resumen - Informe biométrico diario.\n"
+        "• /reset - Limpia el contexto previo para hablar de otro tema.\n"
+        "• /datos - Ver datos numéricos crudos.\n"
         "• /ayuda - Recordatorio de comandos."
     )
     await update.message.reply_text(msg)
+
+async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_user_allowed(update.effective_user.id):
+        await update.message.reply_text("Acceso no autorizado.")
+        return
+    context.user_data["history"] = []
+    await update.message.reply_text("🧠 Memoria del chat borrada. ¿De qué quieres hablar ahora?")
 
 async def ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_user_allowed(update.effective_user.id):
@@ -72,17 +78,14 @@ async def ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start(update, context)
 
 async def datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Muestra los datos crudos recientes descargados desde Intervals.icu"""
     if not is_user_allowed(update.effective_user.id):
         await update.message.reply_text("Acceso no autorizado.")
         return
-        
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     intervals_info = get_intervals_data(days=1)
-    await update.message.reply_text(f"📊 *Datos más recientes en Intervals.icu:*\n\n`{intervals_info}`", parse_mode="Markdown")
+    await update.message.reply_text(f"📊 *Datos recientes en Intervals.icu:*\n\n`{intervals_info}`", parse_mode="Markdown")
 
 async def resumen(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Genera el informe biométrico estructurado cuando se solicita explícitamente"""
     if not is_user_allowed(update.effective_user.id):
         await update.message.reply_text("Acceso no autorizado.")
         return
@@ -93,25 +96,25 @@ async def resumen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gemini_key = os.getenv("GEMINI_API_KEY")
     fecha_actual = datetime.now().strftime("%Y-%m-%d")
 
-    prompt_resumen = f"""
+    system_instruction = f"""
     Eres un entrenador deportivo experto en fisiología del ejercicio y recuperación.
     FECHA ACTUAL: {fecha_actual}
+    DATOS RECIENTES DE INTERVALS.ICU: {intervals_info}
 
-    DATOS RECIENTES DE INTERVALS.ICU (Últimos días):
-    {intervals_info}
-
-    INSTRUCCIONES DE FORMATO Y ESTILO:
-    1. Genera un informe limpio, directo, profesional y muy fácil de leer en pantalla de móvil.
-    2. Sintetiza las métricas clave (FC en reposo, HRV, horas de sueño, ATL/CTL si están disponibles) comparando brevemente con los días previos.
-    3. PROHIBIDO usar símbolos de LaTeX (como $\\rightarrow$), encabezados con '###' ni tablas complejas.
-    4. Cierra con una RECOMENDACIÓN CONCRETA para hoy (intensidad de sesión, descanso activo o suave).
+    INSTRUCCIONES:
+    1. Informe limpio, directo, profesional y muy fácil de leer en móvil.
+    2. Sintetiza métricas clave comparando brevemente con días previos.
+    3. PROHIBIDO usar LaTeX, '###' o tablas complejas.
+    4. Cierra con recomendación concreta para hoy.
     """
 
     try:
         client = genai.Client(api_key=gemini_key)
+        config = types.GenerateContentConfig(system_instruction=system_instruction)
         response = client.models.generate_content(
             model='gemini-flash-latest',
-            contents=prompt_resumen,
+            contents="Haz un resumen completo de mi estado actual.",
+            config=config
         )
         output_text = response.text if response.text else "No se pudo generar el resumen."
         await update.message.reply_text(str(output_text))
@@ -130,32 +133,45 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     intervals_info = get_intervals_data(days=2)
     gemini_key = os.getenv("GEMINI_API_KEY")
     fecha_actual = datetime.now().strftime("%Y-%m-%d")
-    
-    prompt_completo = f"""
-    Eres un entrenador personal y preparador físico cercano, directo y humano. Hablas por chat de WhatsApp/Telegram.
-    FECHA ACTUAL: {fecha_actual}
 
-    CONTEXTO INTERNO DE DATOS BIOMÉTRICOS (INTERVALS.ICU):
-    {intervals_info}
+    if "history" not in context.user_data or not isinstance(context.user_data["history"], list):
+        context.user_data["history"] = []
+
+    history = context.user_data["history"]
+
+    system_instruction = f"""
+    Eres un entrenador personal y preparador físico cercano, directo y humano. Hablas por chat de Telegram.
+    FECHA ACTUAL: {fecha_actual}
+    CONTEXTO INTERNO DE DATOS BIOMÉTRICOS (INTERVALS.ICU): {intervals_info}
 
     REGLAS DE RESPUESTA:
-    1. TONO: Natural, directo, conciso y cercano. Habla de tú a tú.
-    2. FORMATO: PROHIBIDO usar encabezados tipo '###', listas robóticas interminables o código LaTeX.
-    3. USO DE DATOS BIOMÉTRICOS: Usa estos datos solo como contexto interno para saber si el atleta está fatigado, descansado o sobrecargado. NO recites la lista de métricas a menos que el usuario lo pida expresamente.
-    4. BREVEDAD: Para preguntas casuales o dudas rápidas, responde en 2 a 4 frases concisas y prácticas. Ve directo al grano.
-
-    MENSAJE DEL USUARIO:
-    {user_prompt}
+    1. TONO: Natural, directo, conciso y cercano.
+    2. FORMATO: PROHIBIDO usar encabezados tipo '###', listas robóticas o LaTeX.
+    3. HISTORIAL: Tienes acceso a los últimos mensajes de la conversación. Mantén la coherencia del hilo.
+    4. BREVEDAD: Responde en 2 a 4 frases concisas salvo que se te pida explícitamente detallar más.
     """
+
+    contents = []
+    for turn in history[-10:]:
+        contents.append(turn)
     
+    contents.append({"role": "user", "parts": [{"text": user_prompt}]})
+
     try:
         client = genai.Client(api_key=gemini_key)
+        config = types.GenerateContentConfig(system_instruction=system_instruction)
         response = client.models.generate_content(
             model='gemini-flash-latest',
-            contents=prompt_completo,
+            contents=contents,
+            config=config
         )
         output_text = response.text if response.text else "No pude generar respuesta."
-        
+
+        # Guardar en memoria
+        history.append({"role": "user", "parts": [{"text": user_prompt}]})
+        history.append({"role": "model", "parts": [{"text": output_text}]})
+        context.user_data["history"] = history[-10:]
+
         if len(output_text) > 4000:
             for i in range(0, len(output_text), 4000):
                 await update.message.reply_text(output_text[i:i+4000])
@@ -175,10 +191,11 @@ def main():
         logging.error("Falta la variable TELEGRAM_BOT_TOKEN en Railway.")
         return
 
-    logging.info("Iniciando bot de Telegram...")
+    logging.info("Iniciando bot de Telegram con memoria...")
     
     app = Application.builder().token(bot_token).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("reset", reset))
     app.add_handler(CommandHandler("ayuda", ayuda))
     app.add_handler(CommandHandler("resumen", resumen))
     app.add_handler(CommandHandler("datos", datos))
