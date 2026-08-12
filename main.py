@@ -6,14 +6,12 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from google import genai
 
-# Configuración de logs
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 
 def get_intervals_data():
-    """Consulta los datos recientes de salud/bienestar en Intervals.icu"""
     athlete_id = os.getenv("INTERVALS_ATHLETE_ID")
     api_key = os.getenv("INTERVALS_API_KEY")
 
@@ -33,16 +31,25 @@ def get_intervals_data():
         return f"Error de conexión con Intervals.icu: {e}"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("¡Hola! Soy tu asistente de entrenamiento. Pregúntame sobre tu descanso o recuperación.")
+    await update.message.reply_text("¡Hola! Soy tu asistente de entrenamiento. Pregúntame sobre tu descanso, HRV o preparación para la sesión de hoy.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Security Check
+    allowed_user_id = os.getenv("ALLOWED_TELEGRAM_USER_ID")
+    if allowed_user_id and str(update.effective_user.id) != str(allowed_user_id):
+        await update.message.reply_text("Servicio privado: No tienes permisos para usar este bot.")
+        return
+
+    # Indicador de estado "Escribiendo..." en Telegram
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+
     user_prompt = update.message.text
     intervals_info = get_intervals_data()
     gemini_key = os.getenv("GEMINI_API_KEY")
     
     prompt_completo = f"""
-    Eres un entrenador deportivo experto en fisiología y recuperación.
-    Analiza la consulta del usuario combinándola con sus datos biométricos recientes importados desde Garmin a Intervals.icu:
+    Eres un entrenador deportivo experto en fisiología, HRV y recuperación deportiva.
+    Analiza la consulta del usuario interpretando sus datos biométricos recientes importados desde Garmin a Intervals.icu:
 
     DATOS RECIENTES DE INTERVALS.ICU:
     {intervals_info}
@@ -50,7 +57,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     MENSAJE DEL USUARIO:
     {user_prompt}
 
-    Responde de forma directa, concisa y práctica con recomendaciones sobre descanso, preparación física o carga de entrenamiento.
+    Responde de forma estructurada, directa y práctica, dando pautas concretas sobre la intensidad del entrenamiento, descanso activo o ajuste de cargas.
     """
     
     try:
@@ -61,7 +68,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         output_text = response.text if response.text else "No se generó respuesta con los datos actuales."
         
-        # División de mensajes largos para no superar el límite de Telegram
         if len(output_text) > 4000:
             for i in range(0, len(output_text), 4000):
                 await update.message.reply_text(output_text[i:i+4000])
@@ -88,7 +94,6 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
 
-    # Bucle de tolerancia a fallos de arranque/despliegue en Railway
     while True:
         try:
             app.run_polling(drop_pending_updates=True)
