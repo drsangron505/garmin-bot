@@ -4,7 +4,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from google import genai
 
-# Cargar variables de entorno de Railway
+# Cargar variables de entorno desde Railway
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 INTERVALS_API_KEY = os.getenv("INTERVALS_API_KEY")
 INTERVALS_ATHLETE_ID = os.getenv("INTERVALS_ATHLETE_ID")
@@ -18,18 +18,18 @@ def get_intervals_data():
     url = f"https://intervals.icu/api/v1/athlete/{INTERVALS_ATHLETE_ID}/wellness"
     headers = {"Authorization": f"Bearer {INTERVALS_API_KEY}"}
     try:
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
             data = response.json()
-            if data and isinstance(data, list):
-                return str(data[-1])  # Registro más reciente
+            if data and isinstance(data, list) and len(data) > 0:
+                return str(data[-1])
             return str(data)
-        return "No se pudieron recuperar los datos de Intervals.icu."
+        return f"No se pudieron obtener datos de Intervals.icu (Código {response.status_code})."
     except Exception as e:
         return f"Error de conexión con Intervals.icu: {e}"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("¡Hola! Soy tu asistente de entrenamiento. Escríbeme cuando quieras para analizar tu recuperación o recomendarte la carga del día.")
+    await update.message.reply_text("¡Hola! Soy tu asistente de entrenamiento. Pregúntame lo que quieras sobre tu descanso o recuperación.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_prompt = update.message.text
@@ -50,12 +50,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         response = client.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-2.5-flash',
             contents=prompt_completo,
         )
-        await update.message.reply_text(response.text)
+        # Validar que la respuesta contenga texto antes de enviarla a Telegram
+        output_text = response.text if response.text else "No se pudo generar un análisis con los datos actuales."
+        await update.message.reply_text(str(output_text))
     except Exception as e:
-        await update.message.reply_text(f"Error procesando la consulta con Gemini: {e}")
+        await update.message.reply_text(f"Error al procesar la consulta con Gemini: {str(e)}")
 
 def main():
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
