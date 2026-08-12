@@ -29,10 +29,9 @@ def get_intervals_data():
         return f"Error en Intervals.icu: {e}"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("¡Hola! Puedes enviar /modelos para consultar la lista exacta de modelos activos en tu cuenta.")
+    await update.message.reply_text("¡Hola! Soy tu asistente de entrenamiento. Pregúntame sobre tu descanso o recuperación.")
 
 async def list_models(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Llama a ModelService.ListModels para mostrar los modelos permitidos por tu API Key"""
     try:
         available = [m.name for m in client.models.list()]
         lista_str = "\n".join(available) if available else "No se encontraron modelos."
@@ -46,7 +45,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     prompt_completo = f"""
     Eres un entrenador deportivo experto en fisiología y recuperación.
-    Analiza la consulta del usuario combinándola con sus datos biométricos recientes:
+    Analiza la consulta del usuario combinándola con sus datos biométricos recientes importados desde Garmin a Intervals.icu:
 
     DATOS RECIENTES DE INTERVALS.ICU:
     {intervals_info}
@@ -54,28 +53,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     MENSAJE DEL USUARIO:
     {user_prompt}
 
-    Responde de forma directa, concisa y práctica.
+    Responde de forma directa, concisa y práctica con recomendaciones sobre descanso, preparación física o carga de entrenamiento.
     """
     
     try:
         response = client.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-2.5-flash',
             contents=prompt_completo,
         )
-        output_text = response.text if response.text else "No se generó respuesta."
+        output_text = response.text if response.text else "No se generó respuesta con los datos actuales."
         await update.message.reply_text(str(output_text))
     except Exception as e:
-        # En caso de fallo, listamos directamente los modelos permitidos
-        try:
-            available = [m.name for m in client.models.list()]
-            lista = "\n".join(available[:10])
-            error_msg = f"Error generando respuesta: {e}\n\nModelos reconocidos por tu API Key:\n{lista}"
-        except Exception as e2:
-            error_msg = f"Error generando respuesta: {e}\n(Tampoco se pudieron listar modelos: {e2})"
-        
-        await update.message.reply_text(error_msg)
+        await update.message.reply_text(f"Error procesando la consulta con Gemini: {str(e)}")
 
 def main():
+    if not TELEGRAM_BOT_TOKEN:
+        print("Error: Falta la variable TELEGRAM_BOT_TOKEN")
+        return
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("modelos", list_models))
